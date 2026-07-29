@@ -1,65 +1,108 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
+import { useEffect, useState, useRef, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
+import { motion } from "framer-motion";
+import { X } from "lucide-react";
+
+function SimulatorContent() {
+  const searchParams = useSearchParams();
+  const text = searchParams.get("text") || "FRATELLO!!";
+  const emotion = searchParams.get("emotion") || "angry"; // "angry" | "happy" | "neutral"
+  const audioUrl = searchParams.get("audio");
+
+  const [isPlaying, setIsPlaying] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    if (audioUrl) {
+      const audio = new Audio(audioUrl);
+      audioRef.current = audio;
+
+      audio.onplay = () => setIsPlaying(true);
+      audio.onended = () => setIsPlaying(false);
+      
+      // Auto-play might be blocked by browser unless triggered by Playwright with specific flags
+      audio.play().catch(e => console.log("Autoplay prevented:", e));
+    } else {
+      // Simulate playing for 2 seconds if no audio provided (for testing UI)
+      setIsPlaying(true);
+      setTimeout(() => setIsPlaying(false), 2000);
+    }
+  }, [audioUrl]);
+
+  // Determine animation based on emotion and playing state
+  const mascotAnimation = isPlaying
+    ? emotion === "angry" 
+      ? { x: [-5, 5, -5, 5, 0], y: [-2, 2, -2, 2, 0], scale: [1, 1.1, 1] }
+      : { y: [0, -10, 0], scale: [1, 1.05, 1] }
+    : { y: 0, x: 0, scale: 1 };
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <div className="flex flex-col items-center justify-center min-h-screen bg-white text-gray-900 font-sans p-4">
+      {/* App Header Simulation */}
+      <div className="w-full max-w-sm flex items-center justify-between mb-16 pb-4 border-b-2 border-gray-100">
+        <X className="w-8 h-8 text-gray-300" />
+        <h1 className="font-extrabold text-2xl tracking-tight text-gray-800">ToxiLingo</h1>
+        <div className="w-8 h-8 rounded-full border-[3px] border-green-500 flex items-center justify-center">
+          <div className="w-5 h-5 bg-green-500 rounded-full flex items-center justify-center">
+             <span className="text-white text-[10px] font-bold">★</span>
+          </div>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+      </div>
+
+      {/* Mascot Area */}
+      <div className="flex-1 flex flex-col items-center justify-center w-full max-w-sm relative">
+        <motion.div
+          animate={mascotAnimation}
+          transition={
+            isPlaying 
+              ? { duration: 0.2, repeat: Infinity, repeatType: "mirror" }
+              : { type: "spring", stiffness: 300, damping: 20 }
+          }
+          className="mb-16 relative"
+        >
+          <img 
+            src="/mascot.jpg" 
+            alt="Mascot" 
+            className={`w-64 h-64 object-cover rounded-3xl ${emotion === 'angry' ? 'shadow-[0_0_40px_rgba(239,68,68,0.3)]' : 'shadow-xl'} p-2`}
+          />
+        </motion.div>
+
+        {/* Text Area */}
+        <div className="h-24 flex items-center justify-center">
+          {isPlaying && (
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.8 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ type: "spring", bounce: 0.5 }}
+            >
+              <h2 className="text-5xl font-black text-center uppercase tracking-widest text-gray-800"
+                  style={{ textShadow: "3px 3px 0px rgba(0,0,0,0.05)" }}>
+                {text}
+              </h2>
+            </motion.div>
+          )}
         </div>
-      </main>
+        
+        {/* Progress Bar Simulation */}
+        <div className="w-full mt-24 mb-12 bg-gray-100 h-6 rounded-full overflow-hidden">
+           <motion.div 
+             initial={{ width: "30%" }}
+             animate={{ width: isPlaying ? "80%" : "30%" }}
+             transition={{ duration: 1.5 }}
+             className="h-full bg-green-500 rounded-full"
+           />
+        </div>
+      </div>
     </div>
+  );
+}
+
+export default function SimulatorPage() {
+  return (
+    <Suspense fallback={<div>Loading...</div>}>
+      <SimulatorContent />
+    </Suspense>
   );
 }
