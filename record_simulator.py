@@ -16,8 +16,9 @@ async def main():
         )
         page = await context.new_page()
         
-        # Ensure we are testing against localhost:3002
-        url = "http://localhost:3002/?text=CAZZO!&emotion=angry"
+        # Open the local HTML file instead of the Next.js server
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        url = f"file://{current_dir}/orb.html?text=PERRITA!"
         print(f"Navigating to {url}...")
         
         try:

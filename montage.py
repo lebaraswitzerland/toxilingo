@@ -27,6 +27,13 @@ try:
     # Load the captured app simulator video
     app_clip = VideoFileClip(app_video_path)
     
+    # Add dirty VFX to simulate phone recording (decrease contrast, add slight color tint)
+    import moviepy.video.fx as vfx
+    app_clip = app_clip.with_effects([
+        vfx.MultiplyColor(0.9), # Darken slightly
+        vfx.LumContrast(lum=-10, contrast=0.8) # Wash out contrast
+    ])
+    
     # Assure dimensions match exactly or pad them (simplified for POC)
     if human_clip.size != app_clip.size:
         print(f"Warning: Sizes differ. Human: {human_clip.size}, App: {app_clip.size}. Resizing app clip.")

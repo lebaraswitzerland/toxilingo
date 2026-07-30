@@ -41,20 +41,24 @@ def process_script(script):
     print(f"🤖 App: {script.get('reponse_app')}")
     print(f"🎯 Mot cible: {script.get('mot_cible')} | Émotion: {script.get('emotion')}")
     
-    # ÉTAPE 1: Génération TTS (ElevenLabs)
-    print("⏳ [Mock] Appel API ElevenLabs en cours...")
+    # ÉTAPE 1: Génération TTS (ElevenLabs/Google)
+    print("⏳ [Mock] Appel API TTS pour générer la voix toxique...")
     time.sleep(1)
     
-    # ÉTAPE 2: Capture Playwright du simulateur
-    print(f"⏳ [Mock] Enregistrement Playwright de l'app avec ?text={script.get('mot_cible')}&emotion={script.get('emotion')}...")
-    time.sleep(2)
+    # ÉTAPE 2: Sélection de la vidéo Veo 3
+    print("⏳ [Mock] Sélection aléatoire d'une vidéo Veo 3 dans videos_humain/...")
+    time.sleep(1)
     
-    # ÉTAPE 3: Montage FFmpeg
-    print("⏳ [Mock] Assemblage FFmpeg avec la vidéo humaine...")
-    time.sleep(2)
+    # ÉTAPE 3: Capture Playwright de l'Orbe K2000
+    print(f"⏳ [Mock] Enregistrement Playwright de l'Orbe HTML avec le texte...")
+    time.sleep(1)
     
-    # ÉTAPE 4: Terminé
-    print("🎬 Vidéo générée avec succès !")
+    # ÉTAPE 4: Montage FFmpeg (Dirty VFX)
+    print("⏳ [Mock] Assemblage FFmpeg avec filtres crades (grain, baisse de contraste)...")
+    time.sleep(1)
+    
+    # ÉTAPE 5: Terminé
+    print("🎬 Vidéo V2 générée avec succès !")
     mark_script_as_done(script.get('id'))
 
 def main():
