@@ -16,8 +16,8 @@ async def main():
         )
         page = await context.new_page()
         
-        # Use the Next.js local server or Vercel production URL
-        url = f"http://localhost:3002/?text=PERRITA!"
+        # Use the Next.js local server on port 3000
+        url = "http://localhost:3000/?q=Como%20se%20dice%20'can%20I%20eat%20cake'%20en%20espa%C3%B1ol?&text=Como%20culo?%20You%20eat%20ass?%20...%20OH%20MY%20GOD!!%20HAHAHAHAHA!%20EWWWW!"
         print(f"Navigating to {url}...")
         
         try:
