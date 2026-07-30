@@ -16,9 +16,8 @@ async def main():
         )
         page = await context.new_page()
         
-        # Open the local HTML file instead of the Next.js server
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        url = f"file://{current_dir}/orb.html?text=PERRITA!"
+        # Use the Next.js local server or Vercel production URL
+        url = f"http://localhost:3002/?text=PERRITA!"
         print(f"Navigating to {url}...")
         
         try:

@@ -1,108 +1,55 @@
 "use client";
+import { useEffect, useState } from 'react';
 
-import { useEffect, useState, useRef, Suspense } from "react";
-import { useSearchParams } from "next/navigation";
-import { motion } from "framer-motion";
-import { X } from "lucide-react";
-
-function SimulatorContent() {
-  const searchParams = useSearchParams();
-  const text = searchParams.get("text") || "FRATELLO!!";
-  const emotion = searchParams.get("emotion") || "angry"; // "angry" | "happy" | "neutral"
-  const audioUrl = searchParams.get("audio");
-
-  const [isPlaying, setIsPlaying] = useState(false);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+export default function OrbPage() {
+  const [text, setText] = useState('');
 
   useEffect(() => {
-    if (audioUrl) {
-      const audio = new Audio(audioUrl);
-      audioRef.current = audio;
+    // Lire les paramètres URL côté client
+    const params = new URLSearchParams(window.location.search);
+    const textParam = params.get('text');
+    if (textParam) setText(textParam);
+  }, []);
 
-      audio.onplay = () => setIsPlaying(true);
-      audio.onended = () => setIsPlaying(false);
-      
-      // Auto-play might be blocked by browser unless triggered by Playwright with specific flags
-      audio.play().catch(e => console.log("Autoplay prevented:", e));
-    } else {
-      // Simulate playing for 2 seconds if no audio provided (for testing UI)
-      setIsPlaying(true);
-      setTimeout(() => setIsPlaying(false), 2000);
+  const goFullscreen = () => {
+    const elem = document.documentElement;
+    if (elem.requestFullscreen) {
+      elem.requestFullscreen();
+    } else if ((elem as any).webkitRequestFullscreen) { /* Safari */
+      (elem as any).webkitRequestFullscreen();
+    } else if ((elem as any).msRequestFullscreen) { /* IE11 */
+      (elem as any).msRequestFullscreen();
     }
-  }, [audioUrl]);
-
-  // Determine animation based on emotion and playing state
-  const mascotAnimation = isPlaying
-    ? emotion === "angry" 
-      ? { x: [-5, 5, -5, 5, 0], y: [-2, 2, -2, 2, 0], scale: [1, 1.1, 1] }
-      : { y: [0, -10, 0], scale: [1, 1.05, 1] }
-    : { y: 0, x: 0, scale: 1 };
+  };
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-white text-gray-900 font-sans p-4">
-      {/* App Header Simulation */}
-      <div className="w-full max-w-sm flex items-center justify-between mb-16 pb-4 border-b-2 border-gray-100">
-        <X className="w-8 h-8 text-gray-300" />
-        <h1 className="font-extrabold text-2xl tracking-tight text-gray-800">ToxiLingo</h1>
-        <div className="w-8 h-8 rounded-full border-[3px] border-green-500 flex items-center justify-center">
-          <div className="w-5 h-5 bg-green-500 rounded-full flex items-center justify-center">
-             <span className="text-white text-[10px] font-bold">★</span>
-          </div>
-        </div>
+    <div 
+      className="flex flex-col items-center justify-center w-full h-screen bg-[#f0f2f5] overflow-hidden cursor-pointer"
+      onClick={goFullscreen}
+      title="Cliquez n'importe où pour passer en plein écran"
+    >
+      <style dangerouslySetInnerHTML={{__html: `
+        .orb-wrapper { position: relative; width: 120px; height: 120px; display: flex; justify-content: center; align-items: center; }
+        .orb { width: 100px; height: 100px; border-radius: 50%; background: linear-gradient(135deg, #0052D4, #4364F7, #6FB1FC); box-shadow: 0 0 20px rgba(67, 100, 247, 0.5); z-index: 2; animation: pulse-core 2s infinite alternate; }
+        .orb-ring { position: absolute; width: 120px; height: 120px; border-radius: 50%; border: 4px solid rgba(67, 100, 247, 0.3); border-left-color: #0052D4; animation: spin 1.5s linear infinite, pulse-ring 1s infinite alternate; z-index: 1; }
+        .orb-ring-2 { position: absolute; width: 140px; height: 140px; border-radius: 50%; border: 2px solid rgba(67, 100, 247, 0.1); border-right-color: #6FB1FC; animation: spin-reverse 2s linear infinite; z-index: 0; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        @keyframes spin-reverse { 0% { transform: rotate(360deg); } 100% { transform: rotate(0deg); } }
+        @keyframes pulse-core { 0% { transform: scale(0.95); box-shadow: 0 0 15px rgba(67, 100, 247, 0.4); } 100% { transform: scale(1.05); box-shadow: 0 0 30px rgba(67, 100, 247, 0.8); } }
+        @keyframes pulse-ring { 0% { transform: scale(0.9) rotate(0deg); opacity: 0.5; } 100% { transform: scale(1.1) rotate(180deg); opacity: 1; } }
+        .ai-text { font-size: 24px; font-weight: 600; color: #333; max-width: 80%; margin: 0 auto; opacity: 0; transform: translateY(10px); animation: fade-in 0.5s forwards 0.5s; }
+        @keyframes fade-in { to { opacity: 1; transform: translateY(0); } }
+      `}} />
+
+      <div className="orb-wrapper">
+        <div className="orb-ring-2"></div>
+        <div className="orb-ring"></div>
+        <div className="orb"></div>
       </div>
-
-      {/* Mascot Area */}
-      <div className="flex-1 flex flex-col items-center justify-center w-full max-w-sm relative">
-        <motion.div
-          animate={mascotAnimation}
-          transition={
-            isPlaying 
-              ? { duration: 0.2, repeat: Infinity, repeatType: "mirror" }
-              : { type: "spring", stiffness: 300, damping: 20 }
-          }
-          className="mb-16 relative"
-        >
-          <img 
-            src="/mascot.jpg" 
-            alt="Mascot" 
-            className={`w-64 h-64 object-cover rounded-3xl ${emotion === 'angry' ? 'shadow-[0_0_40px_rgba(239,68,68,0.3)]' : 'shadow-xl'} p-2`}
-          />
-        </motion.div>
-
-        {/* Text Area */}
-        <div className="h-24 flex items-center justify-center">
-          {isPlaying && (
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.8 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ type: "spring", bounce: 0.5 }}
-            >
-              <h2 className="text-5xl font-black text-center uppercase tracking-widest text-gray-800"
-                  style={{ textShadow: "3px 3px 0px rgba(0,0,0,0.05)" }}>
-                {text}
-              </h2>
-            </motion.div>
-          )}
-        </div>
-        
-        {/* Progress Bar Simulation */}
-        <div className="w-full mt-24 mb-12 bg-gray-100 h-6 rounded-full overflow-hidden">
-           <motion.div 
-             initial={{ width: "30%" }}
-             animate={{ width: isPlaying ? "80%" : "30%" }}
-             transition={{ duration: 1.5 }}
-             className="h-full bg-green-500 rounded-full"
-           />
-        </div>
+      
+      <div className="mt-[50px] h-[60px] text-center flex items-center justify-center">
+        {text && <div className="ai-text">{text}</div>}
       </div>
     </div>
-  );
-}
-
-export default function SimulatorPage() {
-  return (
-    <Suspense fallback={<div>Loading...</div>}>
-      <SimulatorContent />
-    </Suspense>
   );
 }
