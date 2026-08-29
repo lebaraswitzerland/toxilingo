@@ -1,0 +1,42 @@
+name: Supabase Keep-Alive
+
+on:
+  schedule:
+    # Every 4 days at 03:00 UTC; Supabase free tier pauses after 7 days of inactivity.
+    - cron: "0 3 */4 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  keep-alive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Ping Supabase REST API
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          curl -fsS --max-time 30 \
+            -H "apikey: ${SUPABASE_SERVICE_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_SERVICE_KEY}" \
+            "${SUPABASE_URL}/rest/v1/"
+          echo ""
+          echo "✅ Supabase keep-alive OK"
+
+      - name: Update keep-alive log
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          echo "Keep-alive last executed: $(date -u +\"%Y-%m-%d %H:%M:%S UTC\")" > supabase-keep-alive.txt
+          git add supabase-keep-alive.txt
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: automated supabase keep-alive"
+            git push origin main
+          fi
