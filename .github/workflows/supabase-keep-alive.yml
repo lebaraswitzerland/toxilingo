@@ -2,8 +2,9 @@ name: Supabase Keep-Alive
 
 on:
   schedule:
-    # Every 4 days at 03:00 UTC; Supabase free tier pauses after 7 days of inactivity.
-    - cron: "0 3 */4 * *"
+    # Every 2 days at 03:00 UTC; Supabase free tier pauses after 7 days of
+    # inactivity, so even one missed run leaves a safe 4-day gap.
+    - cron: "0 3 */2 * *"
   workflow_dispatch:
 
 permissions:
@@ -18,17 +19,32 @@ jobs:
         with:
           persist-credentials: true
 
-      - name: Ping Supabase REST API
+      - name: Write keep-alive row (real activity)
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: |
+          # Real writes (INSERT + DELETE) generate WAL traffic. Reads are NOT
+          # counted as activity by Supabase's auto-pause; writes are.
+          # The marker row is deleted right away, so nothing lands in app data.
+          MARKER_ID="00000000-0000-4000-8000-0000000000ab"
+
           curl -fsS --max-time 30 \
+            -X POST \
             -H "apikey: ${SUPABASE_SERVICE_KEY}" \
             -H "Authorization: Bearer ${SUPABASE_SERVICE_KEY}" \
-            "${SUPABASE_URL}/rest/v1/"
-          echo ""
-          echo "✅ Supabase keep-alive OK"
+            -H "Content-Type: application/json" \
+            -H "Prefer: resolution=merge-duplicates" \
+            -d "{\"id\":\"${MARKER_ID}\",\"question_humain\":\"__keep_alive_ping__\",\"reponse_app\":\"__keep_alive_ping__\",\"mot_cible\":\"__keep_alive_ping__\"}" \
+            "${SUPABASE_URL}/rest/v1/scripts"
+
+          curl -fsS --max-time 30 \
+            -X DELETE \
+            -H "apikey: ${SUPABASE_SERVICE_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_SERVICE_KEY}" \
+            "${SUPABASE_URL}/rest/v1/scripts?id=eq.${MARKER_ID}"
+
+          echo "✅ Supabase keep-alive write OK"
 
       - name: Update keep-alive log
         run: |
