@@ -2,57 +2,282 @@ name: Supabase Keep-Alive
 
 on:
   schedule:
-    # Every 2 days at 03:00 UTC; Supabase free tier pauses after 7 days of
-    # inactivity, so even one missed run leaves a safe 4-day gap.
-    - cron: "0 3 */2 * *"
+    # 3x/day. Supabase pauses Free projects that see too few database requests
+    # over a 7-day window ("a few user requests to the database each day").
+    # One run every 2 days left almost no margin.
+    - cron: "13 4,12,20 * * *"
   workflow_dispatch:
 
 permissions:
   contents: write
+  issues: write # Required to open and close the alert issue
+
+concurrency:
+  group: supabase-keep-alive
+  cancel-in-progress: false
 
 jobs:
   keep-alive:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           persist-credentials: true
 
-      - name: Write keep-alive row (real activity)
+      - name: Query the database
+        id: ping
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
         run: |
-          # Real writes (INSERT + DELETE) generate WAL traffic. Reads are NOT
-          # counted as activity by Supabase's auto-pause; writes are.
-          # The marker row is deleted right away, so nothing lands in app data.
+          set -uo pipefail
+
+          if [ -z "${SUPABASE_URL:-}" ]; then
+            echo "::error::SUPABASE_URL secret is missing"
+            exit 1
+          fi
+
+          # GitHub runs `run:` steps as `bash -e {0}`, so a bare
+          # `[ ... ] && ...` aborts the step as soon as the test is false.
+          # Everything below uses explicit conditionals.
+          KEY="${SUPABASE_SECRET_KEY:-}"
+          if [ -z "$KEY" ]; then
+            KEY="${SUPABASE_SERVICE_KEY:-}"
+          fi
+          if [ -z "$KEY" ]; then
+            echo "::error::no Supabase key available in secrets"
+            exit 1
+          fi
+
+          HOST=${SUPABASE_URL#*://}
+          HOST=${HOST%%/*}
+          REF=${HOST%%.supabase.co}
+
+          # Legacy JWT keys must travel as `apikey` AND as a Bearer token;
+          # new-style sb_secret_ keys must NOT (Supabase answers Invalid JWT).
+          HDRS=(-H "apikey: $KEY")
+          case "$KEY" in
+            sb_*) echo "using new-style key (apikey header only)" ;;
+            *)    HDRS+=(-H "Authorization: Bearer $KEY"); echo "using legacy JWT key" ;;
+          esac
+
+          tried=0
+          ok=0
+          primary_ok=0
+          unresolvable=0
+          where=""
+
+          # Every request is retried: GitHub runners do hit transient DNS and
+          # 403 blips, and one blip used to cost a whole keep-alive cycle.
+          record() {  # $1=label $2=code $3=rc $4=path
+            echo "  $1 $4 -> HTTP ${2:-000} (curl rc=${3})" | tee -a /tmp/keepalive-report.txt
+            if [ "${3}" -eq 6 ]; then
+              unresolvable=1
+            fi
+            case "${2:-000}" in
+              2*) ok=$((ok + 1)); where="$where $1"
+                  # A successful secondary request (a read, a cleanup) must not
+                  # mask a failed write: only the write proves the intended path.
+                  case "$1" in write:*) primary_ok=1 ;; esac ;;
+            esac
+          }
+
+          get() {  # $1 = path, $2 = label
+            tried=$((tried + 1))
+            rc=0
+            code=$(curl -fsS -o /tmp/body.json -w '%{http_code}' --max-time 30 \
+              --retry 5 --retry-delay 3 --retry-all-errors \
+              "${HDRS[@]}" -H 'Prefer: count=exact' \
+              "${SUPABASE_URL}$1") || rc=$?
+            record "$2" "$code" "$rc" "$1"
+          }
+
+          send() {  # $1 = méthode, $2 = path, $3 = données, $4 = label
+            tried=$((tried + 1))
+            rc=0
+            code=$(curl -fsS -o /tmp/body.json -w '%{http_code}' --max-time 30 \
+              --retry 5 --retry-delay 3 --retry-all-errors \
+              "${HDRS[@]}" -X "$1" -H 'Content-Type: application/json' \
+              -H 'Prefer: resolution=merge-duplicates' \
+              --data "$3" "${SUPABASE_URL}$2") || rc=$?
+            record "$4" "$code" "$rc" "$2"
+          }
+
+          NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           MARKER_ID="00000000-0000-4000-8000-0000000000ab"
 
-          curl -fsS --max-time 30 \
-            -X POST \
-            -H "apikey: ${SUPABASE_SERVICE_KEY}" \
-            -H "Authorization: Bearer ${SUPABASE_SERVICE_KEY}" \
-            -H "Content-Type: application/json" \
-            -H "Prefer: resolution=merge-duplicates" \
-            -d "{\"id\":\"${MARKER_ID}\",\"question_humain\":\"__keep_alive_ping__\",\"reponse_app\":\"__keep_alive_ping__\",\"mot_cible\":\"__keep_alive_ping__\"}" \
-            "${SUPABASE_URL}/rest/v1/scripts"
+          # Phase 1 - a real WRITE into the app's own table: it lands in the
+          # database and generates WAL traffic.
+          send POST "/rest/v1/scripts" \
+            "{\"id\":\"${MARKER_ID}\",\"question_humain\":\"__keep_alive_ping__\",\"reponse_app\":\"__keep_alive_ping__\",\"mot_cible\":\"__keep_alive_ping__\"}" \
+            "write:scripts"
 
-          curl -fsS --max-time 30 \
-            -X DELETE \
-            -H "apikey: ${SUPABASE_SERVICE_KEY}" \
-            -H "Authorization: Bearer ${SUPABASE_SERVICE_KEY}" \
-            "${SUPABASE_URL}/rest/v1/scripts?id=eq.${MARKER_ID}"
+          # Phase 2 - read the marker back, then delete it so nothing is left
+          # behind in the app's data.
+          get "/rest/v1/scripts?id=eq.${MARKER_ID}&select=id" "read:scripts"
+          send DELETE "/rest/v1/scripts?id=eq.${MARKER_ID}" "" "cleanup:scripts"
 
-          echo "✅ Supabase keep-alive write OK"
+          # Last resort - if the write path is unavailable (renamed table,
+          # revoked grant), fall back to anything that still reaches Postgres,
+          # so a schema change can never silently kill the keep-alive. The list
+          # of tables is discovered, not hardcoded.
+          if [ "$primary_ok" -eq 0 ]; then
+            echo "the write path failed, falling back to reads"
+            SPEC=$(curl -fsS --max-time 30 \
+              --retry 5 --retry-delay 3 --retry-all-errors \
+              "${HDRS[@]}" -H 'Accept: application/openapi+json' \
+              "${SUPABASE_URL}/rest/v1/" || true)
+            DISCOVERED=$(printf '%s' "$SPEC" | jq -r '.paths | keys[]' 2>/dev/null \
+              | sed 's#^/##' | grep -v -E '^(rpc/|$)' | head -n 6 || true)
+            if [ -n "$DISCOVERED" ]; then
+              echo "tables available: $(printf '%s' "$DISCOVERED" | tr '\n' ' ')"
+              for TABLE in $(printf '%s\n' $DISCOVERED | head -n 3); do
+                get "/rest/v1/${TABLE}?select=*&limit=1" "read:${TABLE}"
+              done
+            else
+              echo "this project exposes no table in its public schema"
+            fi
+            if [ "$ok" -eq 0 ]; then
+              get "/auth/v1/admin/users?per_page=1" "auth:users"
+              get "/storage/v1/bucket" "storage:buckets"
+            fi
+          fi
 
-      - name: Update keep-alive log
+          if [ "$unresolvable" -eq 1 ]; then
+            echo "::warning::${HOST} does not resolve in DNS. That almost always" \
+                 "means the project is PAUSED - resume it at" \
+                 "https://supabase.com/dashboard/project/${REF}"
+          fi
+
+          if [ "$ok" -eq 0 ]; then
+            echo "::error::no successful database request out of ${tried} - keep-alive FAILED"
+            exit 1
+          fi
+
+          where=${where# }
+          echo "✅ Supabase keep-alive OK: ${ok}/${tried} requests (${where}) at $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+
+      - name: Record the run in the repo
+        # Runs even when the ping failed: a periodic commit is what stops GitHub
+        # from disabling the scheduled trigger after 60 days of repo inactivity.
+        # The previous version wrote an empty timestamp (the extra backslashes in
+        # the date format), so the file never changed and no commit ever landed.
+        if: always()
         run: |
+          set -uo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          echo "Keep-alive last executed: $(date -u +\"%Y-%m-%d %H:%M:%S UTC\")" > supabase-keep-alive.txt
+          {
+            echo "Supabase keep-alive last run: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+            echo "database request: ${{ steps.ping.outcome }}"
+            echo "run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          } > supabase-keep-alive.txt
           git add supabase-keep-alive.txt
-          if ! git diff --cached --quiet; then
-            git commit -m "chore: automated supabase keep-alive"
-            git push origin main
+          if git diff --cached --quiet; then
+            echo "nothing to commit"
+            exit 0
           fi
+          git commit -m "chore: supabase keep-alive heartbeat"
+          for attempt in 1 2 3; do
+            if git push origin HEAD:main; then
+              echo "heartbeat pushed (attempt $attempt)"
+              exit 0
+            fi
+            git pull --rebase origin main || true
+          done
+          echo "::error::could not push the heartbeat after 3 attempts"
+          exit 1
+
+      - name: Alert on keep-alive failure
+        # Always runs, and is strictly best-effort: a broken alert must never
+        # turn a healthy keep-alive into a red run, nor hide a real failure.
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
+          PING_OUTCOME: ${{ steps.ping.outcome }}
+        run: |
+          set -uo pipefail
+
+          REPO="${GITHUB_REPOSITORY}"
+          NAME="${REPO##*/}"
+          HOST="${SUPABASE_URL#*://}"
+          HOST="${HOST%%/*}"
+          REF="${HOST%%.supabase.co}"
+          TITLE="Keep-alive Supabase en echec - ${NAME} (${REF})"
+          RUN_URL="https://github.com/${REPO}/actions/runs/${GITHUB_RUN_ID}"
+          DASH="https://supabase.com/dashboard/project/${REF}"
+
+          # One tracking issue per repo, matched on its exact title, so three
+          # failed runs a day do not open three issues a day. Listing (instead
+          # of searching) avoids the search-index lag that would otherwise
+          # create duplicates right after the first failure. A failing gh call
+          # must not kill the alert: we simply lose deduplication.
+          OPEN_ISSUE=""
+          if LIST=$(gh issue list --repo "$REPO" --state open --limit 100 --json number,title); then
+            OPEN_ISSUE=$(printf '%s' "$LIST" \
+              | jq -r --arg t "$TITLE" '.[] | select(.title == $t) | .number' \
+              | head -n 1 || true)
+          else
+            echo "::warning::could not list issues (issues:write missing?), deduplication disabled"
+          fi
+
+          notify() {
+            if [ -z "${ALERT_WEBHOOK_URL:-}" ]; then
+              return 0
+            fi
+            if jq -n --arg m "$1" '{content: $m, text: $m}' \
+              | curl -fsS --max-time 15 --retry 3 --retry-delay 3 --retry-all-errors \
+                  -H 'Content-Type: application/json' --data-binary @- \
+                  "$ALERT_WEBHOOK_URL" >/dev/null; then
+              echo "webhook notified"
+            else
+              echo "::warning::could not POST to ALERT_WEBHOOK_URL"
+            fi
+          }
+
+          if [ "${PING_OUTCOME}" = "success" ]; then
+            if [ -n "$OPEN_ISSUE" ]; then
+              gh issue comment "$OPEN_ISSUE" --repo "$REPO" \
+                --body "Keep-alive retabli. Dernier run : ${RUN_URL}" \
+                || echo "::warning::could not comment on issue #${OPEN_ISSUE}"
+              gh issue close "$OPEN_ISSUE" --repo "$REPO" \
+                || echo "::warning::could not close issue #${OPEN_ISSUE}"
+              notify "Keep-alive Supabase retabli - ${NAME}"
+            else
+              echo "keep-alive OK, no open alert issue"
+            fi
+            exit 0
+          fi
+
+          if [ -n "$OPEN_ISSUE" ]; then
+            echo "::warning::alert issue #${OPEN_ISSUE} is already open, not duplicating"
+            exit 0
+          fi
+
+          DETAIL="unavailable"
+          if [ -s /tmp/keepalive-report.txt ]; then
+            DETAIL=$(tail -n 20 /tmp/keepalive-report.txt)
+          fi
+          BODY="Le keep-alive Supabase a echoue.
+
+          - depot : ${REPO}
+          - projet : ${HOST}
+          - run en echec : ${RUN_URL}
+          - diagnostic : ${DETAIL}
+          - journal complet : ${RUN_URL}
+
+          Si le projet a ete mis en pause : ${DASH}
+
+          Cette issue se ferme automatiquement au premier run en succes."
+
+          if gh issue create --repo "$REPO" --title "$TITLE" --body "$BODY"; then
+            echo "::warning::keep-alive failed, alert issue created"
+          else
+            echo "::warning::keep-alive failed and the alert issue could not be created"
+          fi
+          notify "Keep-alive Supabase en echec - ${NAME} (${REF}) - ${RUN_URL}"
